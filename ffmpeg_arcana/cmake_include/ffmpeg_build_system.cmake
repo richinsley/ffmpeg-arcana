@@ -8,6 +8,7 @@ if (${STEP} STREQUAL configure)
     # load the ffmpeg configuration options file
     file(STRINGS ${FFMPEG_OPTIONS_FILE} ffmpeg_conf_options)
 
+    set(ENV{PKG_CONFIG_PATH} ${FFMPEG_PKG_CONFIG_PATH})
     set(CONFIGURE_COMMAND
             ./configure
             --prefix=${PREFIX}
@@ -19,7 +20,7 @@ if (${STEP} STREQUAL configure)
             ${ffmpeg_conf_options}
             ${CONFIGURE_EXTRAS_ENCODED}
     )
-
+    
     execute_process(COMMAND ${CONFIGURE_COMMAND}
                     RESULT_VARIABLE FFMPEG_CONFIG_RESULT
                     ERROR_VARIABLE FFMPEG_ERROR_RESULT)

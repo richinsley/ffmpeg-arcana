@@ -71,6 +71,7 @@ ExternalProject_Add(ffmpeg_target
         URL ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
         DOWNLOAD_NO_EXTRACT 1
         CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+            PKG_CONFIG_PATH=${FFMPEG_PKG_CONFIG_PATH}
             AS_FLAGS=${FFMPEG_ASM_FLAGS}
             ${CMAKE_COMMAND}
             -DSTEP=configure
@@ -79,6 +80,7 @@ ExternalProject_Add(ffmpeg_target
             -DCONFIGURE_EXTRAS=${FFMPEG_CONFIGURE_EXTRAS}
             -DARCANA_SUFFIX=${ARCANA_SUFFIX}
             -DARCANA_EXTRA_VERSION=${ARCANA_EXTRA_VERSION}
+            -DFFMPEG_PKG_CONFIG_PATH=${FFMPEG_PKG_CONFIG_PATH}
         -P ffmpeg_build_system.cmake
         BUILD_COMMAND ${CMAKE_COMMAND} -E env
             ${CMAKE_COMMAND}

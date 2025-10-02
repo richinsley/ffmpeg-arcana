@@ -11,6 +11,12 @@ if(NOT DEFINED FFMPEG_CONFIGURE_EXTRAS)
     set(FFMPEG_CONFIGURE_EXTRAS )
 endif()
 
+# Check for FFMPEG_PKG_CONFIG_PATH. If not defined by the user,
+# fall back to the PKG_CONFIG_PATH environment variable.
+if(NOT DEFINED FFMPEG_PKG_CONFIG_PATH)
+    set(FFMPEG_PKG_CONFIG_PATH "$ENV{PKG_CONFIG_PATH}")
+endif()
+
 # path for staged build artifacts
 if(NOT DEFINED ARCANA_STAGING_DIRECTORY)
     set(ARCANA_STAGING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/staging)
