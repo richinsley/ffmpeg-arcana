@@ -56,6 +56,19 @@ if (NOT EXISTS ${FFMPEG_SRC_PATH}/${FFMPEG_NAME})
     else()
         message(FATAL_ERROR "Either patch command not found or patch file ${ARCANA_PATCH_PATH} does not exist")
     endif()
+
+    if(ADDITIONAL_PATCHES AND EXISTS "${ADDITIONAL_PATCHES}")
+        file(GLOB patch_files "${ADDITIONAL_PATCHES}/*.patch")
+        foreach(patch_file ${patch_files})
+            message(STATUS "Applying additional patch: ${patch_file}")
+            execute_process(COMMAND ${Patch_EXECUTABLE} -ruN -p1 --input ${patch_file}
+                            WORKING_DIRECTORY ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
+                            RESULT_VARIABLE ADDITIONAL_PATCH_APPLY_RESULT)
+            if(NOT ADDITIONAL_PATCH_APPLY_RESULT EQUAL "0")
+                message(FATAL_ERROR "patch apply ${patch_file} to folder ${FFMPEG_SRC_PATH}/${FFMPEG_NAME} failed with ${ADDITIONAL_PATCH_APPLY_RESULT}")
+            endif()
+        endforeach()
+    endif()
 endif()
 
 file(
@@ -85,7 +98,7 @@ ExternalProject_Add(ffmpeg_target
         BUILD_COMMAND ${CMAKE_COMMAND} -E env
             ${CMAKE_COMMAND}
             -DSTEP=build
-            -NJOBS=${NJOBS}
+            -DNJOBS=${NJOBS}
         -P ffmpeg_build_system.cmake
         BUILD_IN_SOURCE 1
         INSTALL_COMMAND ${CMAKE_COMMAND} -E env
@@ -126,4 +139,3 @@ ExternalProject_Add_Step(
         -P  ${CMAKE_CURRENT_SOURCE_DIR}/cmake_include/post_install.cmake
         DEPENDEES install
 )
-

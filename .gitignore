@@ -50,4 +50,4 @@ Thumbs.db
 
 build/
 scratch.*
-forge/FFmpeg_51/
+forge/FFmpeg_*/
