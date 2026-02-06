@@ -1,14 +1,17 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 
-if (${STEP} STREQUAL configure)
+if("${STEP}" STREQUAL "configure")
     # Encoding string to list
     string(REPLACE "|" ";" CONFIGURE_EXTRAS_ENCODED "${CONFIGURE_EXTRAS}")
     list(REMOVE_ITEM CONFIGURE_EXTRAS_ENCODED "")
 
     # load the ffmpeg configuration options file
-    file(STRINGS ${FFMPEG_OPTIONS_FILE} ffmpeg_conf_options)
+    if(NOT EXISTS "${FFMPEG_OPTIONS_FILE}")
+        message(FATAL_ERROR "FFmpeg options file not found: ${FFMPEG_OPTIONS_FILE}")
+    endif()
+    file(STRINGS "${FFMPEG_OPTIONS_FILE}" ffmpeg_conf_options)
 
-    set(ENV{PKG_CONFIG_PATH} ${FFMPEG_PKG_CONFIG_PATH})
+    set(ENV{PKG_CONFIG_PATH} "${FFMPEG_PKG_CONFIG_PATH}")
     set(CONFIGURE_COMMAND
             ./configure
             --prefix=${PREFIX}
@@ -20,25 +23,35 @@ if (${STEP} STREQUAL configure)
             ${ffmpeg_conf_options}
             ${CONFIGURE_EXTRAS_ENCODED}
     )
-    
+
     execute_process(COMMAND ${CONFIGURE_COMMAND}
                     RESULT_VARIABLE FFMPEG_CONFIG_RESULT
-                    ERROR_VARIABLE FFMPEG_ERROR_RESULT)
+                    ERROR_VARIABLE FFMPEG_ERROR_RESULT
+                    OUTPUT_VARIABLE FFMPEG_OUTPUT_RESULT)
     if(FFMPEG_CONFIG_RESULT AND NOT FFMPEG_CONFIG_RESULT EQUAL 0)
-        message(FATAL_ERROR "${FFMPEG_ERROR_RESULT}")
+        message(FATAL_ERROR "FFmpeg configure failed (exit code ${FFMPEG_CONFIG_RESULT}):\n"
+            "Command: ${CONFIGURE_COMMAND}\n"
+            "stderr: ${FFMPEG_ERROR_RESULT}\n"
+            "stdout: ${FFMPEG_OUTPUT_RESULT}")
     endif()
-elseif(${STEP} STREQUAL build)
+elseif("${STEP}" STREQUAL "build")
     execute_process(COMMAND make -j${NJOBS}
                     RESULT_VARIABLE FFMPEG_BUILD_RESULT
-                    ERROR_VARIABLE FFMPEG_ERROR_RESULT)
+                    ERROR_VARIABLE FFMPEG_ERROR_RESULT
+                    OUTPUT_VARIABLE FFMPEG_OUTPUT_RESULT)
     if(FFMPEG_BUILD_RESULT AND NOT FFMPEG_BUILD_RESULT EQUAL 0)
-        message(FATAL_ERROR "${FFMPEG_ERROR_RESULT}")
+        message(FATAL_ERROR "FFmpeg build failed (exit code ${FFMPEG_BUILD_RESULT}):\n"
+            "stderr: ${FFMPEG_ERROR_RESULT}")
     endif()
-elseif(${STEP} STREQUAL install)
+elseif("${STEP}" STREQUAL "install")
     execute_process(COMMAND make install
                     RESULT_VARIABLE FFMPEG_INSTALL_RESULT
-                    ERROR_VARIABLE FFMPEG_ERROR_RESULT)
+                    ERROR_VARIABLE FFMPEG_ERROR_RESULT
+                    OUTPUT_VARIABLE FFMPEG_OUTPUT_RESULT)
     if(FFMPEG_INSTALL_RESULT AND NOT FFMPEG_INSTALL_RESULT EQUAL 0)
-        message(FATAL_ERROR "${FFMPEG_ERROR_RESULT}")
+        message(FATAL_ERROR "FFmpeg install failed (exit code ${FFMPEG_INSTALL_RESULT}):\n"
+            "stderr: ${FFMPEG_ERROR_RESULT}")
     endif()
+else()
+    message(FATAL_ERROR "Unknown STEP: '${STEP}'. Expected: configure, build, or install")
 endif()

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 
 # path where ffmpeg private include files will be staged
 set(FFMPEG_PRIVATE_INCLUDE_PATH ${ARCANA_STAGING_DIRECTORY}/include/arcana/libavprivate)
@@ -6,11 +6,11 @@ set(FFMPEG_PRIVATE_INCLUDE_PATH ${ARCANA_STAGING_DIRECTORY}/include/arcana/libav
 set(FFMPEG_SRC_PATH ${CMAKE_BINARY_DIR})
 
 if(NOT DEFINED ARCANA_PATCH_VERSION)
-    set(ARCANA_PATCH_VERSION 6.0)
+    set(ARCANA_PATCH_VERSION 8.0)
 endif()
 
 if(NOT DEFINED FFMPEG_VERSION)
-    set(FFMPEG_VERSION 6.0)
+    set(FFMPEG_VERSION 8.0)
 endif()
 
 set(FFMPEG_NAME ffmpeg-${FFMPEG_VERSION})
@@ -30,58 +30,83 @@ else()
     set(ARCANA_EXTRA_VERSION )
 endif()
 
+# Propagate ARCANA_SUFFIX to parent scope so root CMakeLists.txt can access it
+set(ARCANA_SUFFIX "${ARCANA_SUFFIX}" PARENT_SCOPE)
+
 # Replace the ARCANA_PATCH_URL with local path
 set(ARCANA_PATCH_NAME ffmpeg_arcana_patch_${ARCANA_PATCH_VERSION}.patch)
 set(ARCANA_PATCH_PATH ${CMAKE_SOURCE_DIR}/patches/${ARCANA_PATCH_NAME})
 
+# Validate that the patch file exists before proceeding
+if(NOT EXISTS "${ARCANA_PATCH_PATH}")
+    message(FATAL_ERROR "Arcana patch file not found: ${ARCANA_PATCH_PATH}\n"
+        "Available versions can be found in ${CMAKE_SOURCE_DIR}/patches/")
+endif()
+
 get_filename_component(FFMPEG_ARCHIVE_NAME ${FFMPEG_URL} NAME)
 
-if (NOT EXISTS ${FFMPEG_SRC_PATH}/${FFMPEG_NAME})
-    file(DOWNLOAD ${FFMPEG_URL} ${FFMPEG_SRC_PATH}/${FFMPEG_ARCHIVE_NAME})
-    execute_process(
-            COMMAND ${CMAKE_COMMAND} -E tar xzf ${FFMPEG_SRC_PATH}/${FFMPEG_ARCHIVE_NAME}
-            WORKING_DIRECTORY ${FFMPEG_SRC_PATH}
-    )
+# Sentinel file to track that patching was already applied
+set(ARCANA_PATCH_SENTINEL "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}/.arcana_patched")
 
-    # Remove the download of patch file and use local file instead
+if(NOT EXISTS "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}")
+    file(DOWNLOAD ${FFMPEG_URL} "${FFMPEG_SRC_PATH}/${FFMPEG_ARCHIVE_NAME}")
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E tar xf "${FFMPEG_SRC_PATH}/${FFMPEG_ARCHIVE_NAME}"
+        WORKING_DIRECTORY "${FFMPEG_SRC_PATH}"
+        RESULT_VARIABLE TAR_RESULT
+    )
+    if(NOT TAR_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to extract ${FFMPEG_ARCHIVE_NAME}")
+    endif()
+endif()
+
+# Apply patches only if not already applied (sentinel file check)
+if(NOT EXISTS "${ARCANA_PATCH_SENTINEL}")
     find_package(Patch)
     if(Patch_FOUND AND EXISTS "${ARCANA_PATCH_PATH}")
         message(STATUS "Applying Arcana patch: ${ARCANA_PATCH_PATH} to ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}")
-        execute_process(COMMAND ${Patch_EXECUTABLE} -ruN -p1 --input ${ARCANA_PATCH_PATH}
-                            WORKING_DIRECTORY ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
+        execute_process(COMMAND ${Patch_EXECUTABLE} -ruN -p1 --input "${ARCANA_PATCH_PATH}"
+                            WORKING_DIRECTORY "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}"
                             RESULT_VARIABLE PATCH_APPLY_RESULT)
-        if(NOT PATCH_APPLY_RESULT EQUAL "0")
-                message(FATAL_ERROR "patch apply ${ARCANA_PATCH_PATH} to folder ${FFMPEG_SRC_PATH}/${FFMPEG_NAME} failed with ${PATCH_APPLY_RESULT}")
+        if(NOT PATCH_APPLY_RESULT EQUAL 0)
+            message(FATAL_ERROR "patch apply ${ARCANA_PATCH_PATH} to folder ${FFMPEG_SRC_PATH}/${FFMPEG_NAME} failed with ${PATCH_APPLY_RESULT}")
         endif()
     else()
-        message(FATAL_ERROR "Either patch command not found or patch file ${ARCANA_PATCH_PATH} does not exist")
+        message(FATAL_ERROR "Patch command not found (install 'patch' utility) or patch file ${ARCANA_PATCH_PATH} does not exist")
     endif()
 
     if(ADDITIONAL_PATCHES AND EXISTS "${ADDITIONAL_PATCHES}")
         file(GLOB patch_files "${ADDITIONAL_PATCHES}/*.patch")
         foreach(patch_file ${patch_files})
             message(STATUS "Applying additional patch: ${patch_file}")
-            execute_process(COMMAND ${Patch_EXECUTABLE} -ruN -p1 --input ${patch_file}
-                            WORKING_DIRECTORY ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
+            execute_process(COMMAND ${Patch_EXECUTABLE} -ruN -p1 --input "${patch_file}"
+                            WORKING_DIRECTORY "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}"
                             RESULT_VARIABLE ADDITIONAL_PATCH_APPLY_RESULT)
-            if(NOT ADDITIONAL_PATCH_APPLY_RESULT EQUAL "0")
+            if(NOT ADDITIONAL_PATCH_APPLY_RESULT EQUAL 0)
                 message(FATAL_ERROR "patch apply ${patch_file} to folder ${FFMPEG_SRC_PATH}/${FFMPEG_NAME} failed with ${ADDITIONAL_PATCH_APPLY_RESULT}")
             endif()
         endforeach()
     endif()
+
+    # Write sentinel to prevent double-patching on re-configure
+    file(WRITE "${ARCANA_PATCH_SENTINEL}" "patched with ${ARCANA_PATCH_NAME}\n")
 endif()
 
 file(
-        COPY ${CMAKE_CURRENT_SOURCE_DIR}/cmake_include/ffmpeg_build_system.cmake
-        DESTINATION ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    COPY ${CMAKE_CURRENT_SOURCE_DIR}/cmake_include/ffmpeg_build_system.cmake
+    DESTINATION "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}"
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-set(NJOBS 4)
+# Auto-detect CPU count with user override
+if(NOT DEFINED NJOBS)
+    cmake_host_system_information(RESULT NJOBS QUERY NUMBER_OF_LOGICAL_CORES)
+    message(STATUS "Auto-detected ${NJOBS} logical cores for parallel build")
+endif()
 
 ExternalProject_Add(ffmpeg_target
         PREFIX ffmpeg_pref
-        URL ${FFMPEG_SRC_PATH}/${FFMPEG_NAME}
+        URL "${FFMPEG_SRC_PATH}/${FFMPEG_NAME}"
         DOWNLOAD_NO_EXTRACT 1
         CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
             PKG_CONFIG_PATH=${FFMPEG_PKG_CONFIG_PATH}
@@ -113,21 +138,19 @@ ExternalProject_Add(ffmpeg_target
 )
 
 ExternalProject_Get_property(ffmpeg_target SOURCE_DIR)
+
 # add the copy_headers step to the ffmpeg_target external project
 ExternalProject_Add_Step(
         ffmpeg_target
         copy_headers
         COMMAND ${CMAKE_COMMAND}
             -DBUILD_DIR=${SOURCE_DIR}
-            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-            -DFFMPEG_NAME=${FFMPEG_NAME}
             -DOUT=${FFMPEG_PRIVATE_INCLUDE_PATH}
             -DSTAGING=${ARCANA_STAGING_DIRECTORY}
         -P  ${CMAKE_CURRENT_SOURCE_DIR}/cmake_include/copy_headers.cmake
         DEPENDEES install
 )
 
-ExternalProject_Get_property(ffmpeg_target SOURCE_DIR)
 # add the adjust_pkgconfig step to the ffmpeg_target external project
 ExternalProject_Add_Step(
         ffmpeg_target
