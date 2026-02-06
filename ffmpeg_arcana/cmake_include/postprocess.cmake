@@ -1,71 +1,87 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
+
+include(${CMAKE_CURRENT_LIST_DIR}/ffmpeg_modules.cmake)
 
 function(adjust_rpath type obj)
     # we want to handle dylibs and exe
-    if (${type} STREQUAL "lib")
+    if("${type}" STREQUAL "lib")
         set(TARGET_OBJ "${CMAKE_INSTALL_PREFIX}/${type}/${obj}${ARCANA_SUFFIX}.dylib")
     else()
         set(TARGET_OBJ "${CMAKE_INSTALL_PREFIX}/${type}/${obj}${ARCANA_SUFFIX}")
     endif()
 
-    if(EXISTS ${TARGET_OBJ})
+    if(EXISTS "${TARGET_OBJ}")
         message(STATUS "processing rpath for ${TARGET_OBJ}")
-        execute_process (
-            COMMAND bash -c "otool -L ${TARGET_OBJ} | grep ${ARCANA_STAGING_DIRECTORY}/lib"
-            OUTPUT_VARIABLE OTOOLOUT
+        execute_process(
+            COMMAND otool -L "${TARGET_OBJ}"
+            OUTPUT_VARIABLE OTOOL_FULL_OUTPUT
+            RESULT_VARIABLE OTOOL_RESULT
         )
+        if(NOT OTOOL_RESULT EQUAL 0)
+            message(WARNING "otool failed on ${TARGET_OBJ}")
+            return()
+        endif()
 
-        # Replace the contents within the parentheses (including the parentheses themselves) with an empty string, using a non-greedy regex
-        string(REGEX REPLACE "\\([^)]*\\)" "" no_paren_str "${OTOOLOUT}")
-
-        # Replace newline characters with semicolons
-        string(REPLACE "\n" ";" list_str "${no_paren_str}")
-
-        # Create a list from the string
-        string(STRIP "${list_str}" list_str) # Remove any leading/trailing whitespace
-        string(REPLACE ";;" ";" list_str "${list_str}") # Replace double semicolons with a single one
-        list(REMOVE_ITEM list_str "") # Remove any empty items
-        string(REGEX MATCHALL "[^;]+" result_list "${list_str}") # Create a list from the string using semicolons as delimiters
-
-        # process each item with "install_name_tool -change"
-        foreach(item IN LISTS result_list)
-            # get the component
-            get_filename_component(filename "${item}" NAME)
-            set(NEW_TARGET "${CMAKE_INSTALL_PREFIX}/lib/${filename}")
-
-            # if this is a dylib, and the component is equal to "obj", use "install_name_tool -id" instead if "install_name_tool -change"
-            string(LENGTH "${obj}" length_of_obj)
-            string(SUBSTRING "${filename}" 0 ${length_of_obj} filename_sub)
-            if(obj STREQUAL filename_sub)
-                execute_process (
-                    COMMAND bash -c "install_name_tool -id ${NEW_TARGET} ${TARGET_OBJ}"
-                )
-            else()
-                execute_process (
-                    COMMAND bash -c "install_name_tool -change ${item} ${NEW_TARGET} ${TARGET_OBJ}"
-                )
+        # Filter to only lines referencing the staging directory
+        string(REPLACE "\n" ";" OTOOL_LINES "${OTOOL_FULL_OUTPUT}")
+        set(MATCHING_LIBS)
+        foreach(_line ${OTOOL_LINES})
+            string(FIND "${_line}" "${ARCANA_STAGING_DIRECTORY}/lib" _found)
+            if(_found GREATER -1)
+                # Extract the library path (everything before the parenthesized info)
+                string(REGEX REPLACE "\\(.*\\)" "" _clean "${_line}")
+                string(STRIP "${_clean}" _clean)
+                if(NOT "${_clean}" STREQUAL "")
+                    list(APPEND MATCHING_LIBS "${_clean}")
+                endif()
             endif()
         endforeach()
 
-        # handle relative path for bins
-        # https://stackoverflow.com/questions/32524673/install-name-tool-does-not-make-any-changes
+        # process each item with "install_name_tool -change"
+        foreach(item IN LISTS MATCHING_LIBS)
+            get_filename_component(filename "${item}" NAME)
+            set(NEW_TARGET "${CMAKE_INSTALL_PREFIX}/lib/${filename}")
+
+            # if this is a dylib and the filename starts with "obj", use -id instead of -change
+            string(LENGTH "${obj}" length_of_obj)
+            string(LENGTH "${filename}" length_of_filename)
+            if(length_of_filename GREATER_EQUAL length_of_obj)
+                string(SUBSTRING "${filename}" 0 ${length_of_obj} filename_sub)
+            else()
+                set(filename_sub "")
+            endif()
+
+            if("${obj}" STREQUAL "${filename_sub}")
+                execute_process(
+                    COMMAND install_name_tool -id "${NEW_TARGET}" "${TARGET_OBJ}"
+                    RESULT_VARIABLE _result
+                )
+                if(NOT _result EQUAL 0)
+                    message(WARNING "install_name_tool -id failed on ${TARGET_OBJ}")
+                endif()
+            else()
+                execute_process(
+                    COMMAND install_name_tool -change "${item}" "${NEW_TARGET}" "${TARGET_OBJ}"
+                    RESULT_VARIABLE _result
+                )
+                if(NOT _result EQUAL 0)
+                    message(WARNING "install_name_tool -change failed on ${TARGET_OBJ}")
+                endif()
+            endif()
+        endforeach()
     else()
         message(STATUS "${TARGET_OBJ} not found for rpath adjustment")
     endif()
 endfunction()
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    message(STATUS "adjusting rpath for macos dylibs")
-    adjust_rpath(lib libavcodec)
-    adjust_rpath(lib libavdevice)
-    adjust_rpath(lib libavfilter)
-    adjust_rpath(lib libavformat)
-    adjust_rpath(lib libavutil)
-    adjust_rpath(lib libswresample)
-    adjust_rpath(lib libswscale)
-    adjust_rpath(lib libpostproc)
-
-    adjust_rpath(bin ffmpeg)
-    adjust_rpath(bin ffprobe)
-    adjust_rpath(bin ffplay)
+if("${CMAKE_SYSTEM_NAME}" MATCHES "Darwin")
+    message(STATUS "adjusting rpath for macOS dylibs")
+    foreach(_module ${FFMPEG_LIB_MODULES})
+        adjust_rpath(lib ${_module})
+    endforeach()
+    foreach(_bin ${FFMPEG_BIN_TARGETS})
+        adjust_rpath(bin ${_bin})
+    endforeach()
+else()
+    message(STATUS "no rpath adjustment needed on ${CMAKE_SYSTEM_NAME}")
 endif()

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 project(Arcana)
 
 # create ffmpeg options file
@@ -23,20 +23,27 @@ if(NOT DEFINED ARCANA_STAGING_DIRECTORY)
 endif()
 
 # add the ffmpeg build cmake subdirectory that will create the build in the target ARCANA_STAGING_DIRECTORY
+# ARCANA_SUFFIX is propagated to this scope via PARENT_SCOPE in ffmpeg.cmake
 add_subdirectory(ffmpeg_arcana)
 
-if(NOT DEFINED NO_ARCANA_SUFFIX)
-    get_directory_property(ARCANA_SUFFIX DIRECTORY ffmpeg_arcana DEFINITION ARCANA_SUFFIX)
-    message(STATUS "Arcana suffix: ${ARCANA_SUFFIX}")
-else()
+if(DEFINED NO_ARCANA_SUFFIX)
     set(ARCANA_SUFFIX )
 endif()
+message(STATUS "Arcana suffix: ${ARCANA_SUFFIX}")
 
-install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/include DESTINATION ${CMAKE_INSTALL_PREFIX} OPTIONAL)
-install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/bin DESTINATION     ${CMAKE_INSTALL_PREFIX} USE_SOURCE_PERMISSIONS OPTIONAL)
-install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/lib DESTINATION     ${CMAKE_INSTALL_PREFIX} USE_SOURCE_PERMISSIONS OPTIONAL)
+# Validate staging directory exists at install time
+install(CODE "
+    if(NOT EXISTS \"${ARCANA_STAGING_DIRECTORY}/include\" OR NOT EXISTS \"${ARCANA_STAGING_DIRECTORY}/lib\")
+        message(FATAL_ERROR \"Staging directory is missing expected build artifacts. Build may have failed.\n\"
+            \"Expected: ${ARCANA_STAGING_DIRECTORY}/include and ${ARCANA_STAGING_DIRECTORY}/lib\")
+    endif()
+")
+
+install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/include DESTINATION ${CMAKE_INSTALL_PREFIX} USE_SOURCE_PERMISSIONS)
+install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/bin DESTINATION     ${CMAKE_INSTALL_PREFIX} USE_SOURCE_PERMISSIONS)
+install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/lib DESTINATION     ${CMAKE_INSTALL_PREFIX} USE_SOURCE_PERMISSIONS)
 if(DEFINED INSTALL_FFMPEG_SHARED)
-    install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/share DESTINATION ${CMAKE_INSTALL_PREFIX} OPTIONAL)
+    install(DIRECTORY ${ARCANA_STAGING_DIRECTORY}/share DESTINATION ${CMAKE_INSTALL_PREFIX})
 endif()
 
 # perform additional post processing of installation
@@ -52,5 +59,10 @@ install(
         -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}
         -P
         ${CMAKE_SOURCE_DIR}/ffmpeg_arcana/cmake_include/postprocess.cmake
-    )"
+        RESULT_VARIABLE _postprocess_result
+    )
+    if(NOT _postprocess_result EQUAL 0)
+        message(FATAL_ERROR \"Post-processing failed with exit code: \${_postprocess_result}\")
+    endif()
+    "
 )
