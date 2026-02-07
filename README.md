@@ -2,7 +2,7 @@
 
 FFmpeg Arcana is a build system that produces a plugin-enabled version of FFmpeg. It downloads an official FFmpeg release, applies a patch that adds dynamic plugin loading, and builds the result with all of FFmpeg's private headers exposed for plugin development.
 
-Standard FFmpeg has no plugin architecture — codecs, muxers, demuxers, and protocols must all be compiled into the binary at build time. FFmpeg Arcana changes this by patching FFmpeg to load shared libraries at startup via `dlopen()`, allowing custom codecs, muxers, and protocols to be developed and deployed independently without recompiling FFmpeg itself.
+Standard FFmpeg has no plugin architecture — codecs, muxers, demuxers, and protocols must all be compiled into the binary at build time. FFmpeg Arcana changes this by patching FFmpeg to load shared libraries at startup via `dlopen()`, allowing custom codecs, muxers, filters, and protocols to be developed and deployed independently without recompiling FFmpeg itself.
 
 ## How It Works
 
@@ -115,7 +115,45 @@ void arcana_register(char *conf_string)
 }
 ```
 
-Plugins can register codecs, muxers, and protocols using `arcana_register_codec()`, `arcana_register_muxer()`, and `arcana_register_protocol()` respectively.
+### Registration Functions
+
+| Function | Header | Description |
+|----------|--------|-------------|
+| `arcana_register_codec()` | `libavcodec/codec.h` | Register a custom encoder or decoder |
+| `arcana_register_muxer()` | `libavformat/avformat.h` | Register a custom muxer |
+| `arcana_register_demuxer()` | `libavformat/avformat.h` | Register a custom demuxer |
+| `arcana_register_filter()` | `libavfilter/avfilter.h` | Register a custom filter |
+| `arcana_register_protocol()` | `libavformat/avio.h` | Register a custom protocol |
+| `arcana_register_codec_descriptor()` | `libavcodec/codec_desc.h` | Register a custom codec descriptor (7.1+) |
+
+### Custom Codec IDs (FFmpeg 7.1+)
+
+When creating a truly custom codec (not re-implementing an existing one), you need a unique `AVCodecID` and a matching `AVCodecDescriptor`. The patches for FFmpeg 7.1 and later provide two functions for this:
+
+- **`arcana_codec_id_generate(name)`** — Generates a deterministic `AVCodecID` from a codec name string using FNV-1a hashing. The IDs are based at `0x1000000`, well above any built-in FFmpeg codec ID, with a 20-bit hash giving ~1M possible values.
+
+- **`arcana_register_codec_descriptor(desc)`** — Registers an `AVCodecDescriptor` so that FFmpeg's descriptor lookup functions (`avcodec_descriptor_get()`, `avcodec_descriptor_get_by_name()`, and `avcodec_descriptor_next()`) can find it.
+
+Example:
+
+```c
+#include "arcana/libavcodec/codec_desc.h"
+
+AVCodecDescriptor my_codec_desc = {
+    .id        = AV_CODEC_ID_NONE,  /* set at runtime */
+    .type      = AVMEDIA_TYPE_VIDEO,
+    .name      = "my_custom_codec",
+    .long_name = "My Custom Video Codec",
+    .props     = AV_CODEC_PROP_LOSSY,
+};
+
+void arcana_register(char *conf_string)
+{
+    my_codec_desc.id = arcana_codec_id_generate(my_codec_desc.name);
+    arcana_register_codec_descriptor((void *)&my_codec_desc);
+    // ... register encoder/decoder using the same ID ...
+}
+```
 
 The build system exposes FFmpeg's private headers under `include/arcana/libavprivate/`, and the installed pkg-config files include them automatically. See `test_plugins/` for complete working examples.
 
@@ -136,7 +174,7 @@ ffmpeg_arcana/              FFmpeg build orchestration
   cmake_include/            CMake modules for each build phase
 patches/                    Version-specific Arcana patches
 forge/                      Tools for creating and maintaining patches
-test_plugins/               Example plugins (encoder, muxer, protocol)
+test_plugins/               Example plugins (encoder, muxer, filter, codec descriptor)
 ```
 
 ## License
