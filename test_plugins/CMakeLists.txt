@@ -65,7 +65,7 @@ target_compile_definitions(test_arcana_plugs PRIVATE __STDC_CONSTANT_MACROS)
 
 # Define FFMPEG_LIBS explicitly if not provided by the user
 if(NOT DEFINED FFMPEG_LIBS)
-    set(FFMPEG_LIBS avfilter avformat avcodec avutil swresample swscale)
+    set(FFMPEG_LIBS avfilter_arcana avformat_arcana avcodec_arcana avutil_arcana swresample_arcana swscale_arcana)
 endif()
 
 target_link_libraries(test_arcana_plugs PRIVATE
