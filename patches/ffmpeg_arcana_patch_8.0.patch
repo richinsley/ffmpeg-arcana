@@ -202,6 +202,170 @@ index f5ec2e01e8..0dd4ec29a5 100644
  
      ff_thread_once(&av_codec_static_init, av_codec_init_static);
  
+diff --git a/libavcodec/codec_desc.c b/libavcodec/codec_desc.c
+--- a/libavcodec/codec_desc.c
++++ b/libavcodec/codec_desc.c
+@@ -3731,39 +3731,101 @@
+ };
+
+ static int descriptor_compare(const void *key, const void *member)
+ {
+     enum AVCodecID id = *(const enum AVCodecID *) key;
+     const AVCodecDescriptor *desc = member;
+
+     return id - desc->id;
+ }
+
+-const AVCodecDescriptor *avcodec_descriptor_get(enum AVCodecID id)
+-{
+-    return bsearch(&id, codec_descriptors, FF_ARRAY_ELEMS(codec_descriptors),
+-                   sizeof(codec_descriptors[0]), descriptor_compare);
+-}
+-
+-const AVCodecDescriptor *avcodec_descriptor_next(const AVCodecDescriptor *prev)
+-{
+-    if (!prev)
+-        return &codec_descriptors[0];
+-    if (prev - codec_descriptors < FF_ARRAY_ELEMS(codec_descriptors) - 1)
+-        return prev + 1;
+-    return NULL;
+-}
++/* Arcana codec descriptor registration */
++#define MAX_ARCANA_DESCRIPTORS 1024
++static AVCodecDescriptor ** arcana_descriptors = NULL;
++static int arcana_descriptor_count = 0;
++
++int arcana_register_codec_descriptor(void * desc_opaque)
++{
++    if (!arcana_descriptors) {
++        arcana_descriptors = calloc(1, sizeof(AVCodecDescriptor *) * MAX_ARCANA_DESCRIPTORS);
++        arcana_descriptor_count = 0;
++    }
++
++    if (!desc_opaque)
++        return 0;
++
++    if (arcana_descriptor_count == MAX_ARCANA_DESCRIPTORS - 1)
++        return AVERROR(ENOMEM);
++
++    arcana_descriptors[arcana_descriptor_count] = (AVCodecDescriptor *)desc_opaque;
++    arcana_descriptor_count++;
++    return 0;
++}
++
++enum AVCodecID arcana_codec_id_generate(const char *name)
++{
++    uint32_t hash = 0x811c9dc5;  /* FNV-1a offset basis */
++    const uint32_t prime = 0x01000193; /* FNV-1a prime */
++    const char *p;
++
++    for (p = name; *p; p++) {
++        hash ^= (uint32_t)(unsigned char)*p;
++        hash *= prime;
++    }
++
++    return (enum AVCodecID)(0x1000000 + (hash & 0xFFFFF));
++}
++
++const AVCodecDescriptor *avcodec_descriptor_get(enum AVCodecID id)
++{
++    int i;
++    /* Check arcana descriptors first (linear scan, small array) */
++    for (i = 0; i < arcana_descriptor_count; i++) {
++        if (arcana_descriptors[i]->id == id)
++            return arcana_descriptors[i];
++    }
++
++    /* Fall back to built-in sorted array */
++    return bsearch(&id, codec_descriptors, FF_ARRAY_ELEMS(codec_descriptors),
++                   sizeof(codec_descriptors[0]), descriptor_compare);
++}
++
++const AVCodecDescriptor *avcodec_descriptor_next(const AVCodecDescriptor *prev)
++{
++    int i;
++    if (!prev) {
++        /* Start iteration: arcana descriptors first, then built-in */
++        if (arcana_descriptor_count > 0)
++            return arcana_descriptors[0];
++        return &codec_descriptors[0];
++    }
++
++    /* Check if prev is in the arcana array */
++    for (i = 0; i < arcana_descriptor_count; i++) {
++        if (arcana_descriptors[i] == prev) {
++            if (i + 1 < arcana_descriptor_count)
++                return arcana_descriptors[i + 1];
++            /* End of arcana descriptors, chain to built-in */
++            return &codec_descriptors[0];
++        }
++    }
++
++    /* prev is in the built-in array */
++    if (prev - codec_descriptors < FF_ARRAY_ELEMS(codec_descriptors) - 1)
++        return prev + 1;
++    return NULL;
++}
+
+ const AVCodecDescriptor *avcodec_descriptor_get_by_name(const char *name)
+ {
+     const AVCodecDescriptor *desc = NULL;
+
+     while ((desc = avcodec_descriptor_next(desc)))
+         if (!strcmp(desc->name, name))
+             return desc;
+     return NULL;
+ }
+
+ enum AVMediaType avcodec_get_type(enum AVCodecID codec_id)
+ {
+     const AVCodecDescriptor *desc = avcodec_descriptor_get(codec_id);
+     return desc ? desc->type : AVMEDIA_TYPE_UNKNOWN;
+diff --git a/libavcodec/codec_desc.h b/libavcodec/codec_desc.h
+--- a/libavcodec/codec_desc.h
++++ b/libavcodec/codec_desc.h
+@@ -128,7 +128,41 @@
+ const AVCodecDescriptor *avcodec_descriptor_get_by_name(const char *name);
+
++/**
++ * Arcana - Register an external codec descriptor.
++ * @param desc_opaque       AVCodecDescriptor* cast as void *
++ * @return >=0 on success or negative on error.
++ */
++int arcana_register_codec_descriptor(void * desc_opaque);
++
++/**
++ * Arcana - Generate a unique AVCodecID from a codec name string at runtime.
++ * Uses FNV-1a hash with a high base offset (0x1000000) to produce
++ * deterministic IDs that do not collide with built-in FFmpeg codec IDs.
++ * @param name      The codec name string (must not be NULL)
++ * @return          A unique AVCodecID value for use with custom codecs
++ */
++enum AVCodecID arcana_codec_id_generate(const char *name);
++
++/**
++ * Arcana - Compile-time AVCodecID generation from a string literal.
++ * Produces the same value as arcana_codec_id_generate() but can be used
++ * in static initializers. Supports names up to 32 characters.
++ *
++ * Usage: .id = ARCANA_CODEC_ID("my_codec_name")
++ */
++#define _ARCANA_FNV_BYTE(h, b) \
++    (((h) ^ (uint32_t)(unsigned char)(b)) * ((uint32_t)0x01000193 * (uint32_t)(!!(b)) + (uint32_t)(!(b))))
++#define _ARCANA_FNV_1(s,i,h)  _ARCANA_FNV_BYTE(h, (s)[i])
++#define _ARCANA_FNV_2(s,i,h)  _ARCANA_FNV_1(s,(i)+1,  _ARCANA_FNV_1(s,i,h))
++#define _ARCANA_FNV_4(s,i,h)  _ARCANA_FNV_2(s,(i)+2,  _ARCANA_FNV_2(s,i,h))
++#define _ARCANA_FNV_8(s,i,h)  _ARCANA_FNV_4(s,(i)+4,  _ARCANA_FNV_4(s,i,h))
++#define _ARCANA_FNV_16(s,i,h) _ARCANA_FNV_8(s,(i)+8,  _ARCANA_FNV_8(s,i,h))
++#define _ARCANA_FNV_32(s,i,h) _ARCANA_FNV_16(s,(i)+16, _ARCANA_FNV_16(s,i,h))
++#define ARCANA_CODEC_ID(name) \
++    ((enum AVCodecID)(0x1000000 + (_ARCANA_FNV_32(name, 0, (uint32_t)0x811c9dc5) & 0xFFFFF)))
++
+ /**
+  * @}
+  */
+
+ #endif // AVCODEC_CODEC_DESC_H
 diff --git a/libavcodec/codec.h b/libavcodec/codec.h
 index f509e5d94e..27910c3a69 100644
 --- a/libavcodec/codec.h

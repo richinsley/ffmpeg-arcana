@@ -20,14 +20,34 @@ if(NOT EXISTS "${ARCANA_PREFIX}/include")
         "Has FFmpeg Arcana been built and installed?")
 endif()
 
-add_library(test_arcana_plugs SHARED
+# Detect FFmpeg major version to handle API differences
+file(STRINGS "${ARCANA_PREFIX}/include/arcana/libavfilter/version_major.h" _avfilter_ver_line
+     REGEX "^#define LIBAVFILTER_VERSION_MAJOR")
+if(_avfilter_ver_line)
+    string(REGEX REPLACE ".*LIBAVFILTER_VERSION_MAJOR[ \t]+([0-9]+).*" "\\1" AVFILTER_VERSION_MAJOR "${_avfilter_ver_line}")
+else()
+    set(AVFILTER_VERSION_MAJOR 0)
+endif()
+message(STATUS "Detected libavfilter major version: ${AVFILTER_VERSION_MAJOR}")
+
+set(TEST_PLUGIN_SOURCES
     # test_proto.c
     test_mux.c
     # nut.c
     test_enc.c
-    test_filter.c
+    test_desc.c
     arcana_loader.c
 )
+
+# test_filter.c uses AVFilter internals that changed in FFmpeg 8.0 (libavfilter 11)
+if(AVFILTER_VERSION_MAJOR LESS 11)
+    list(APPEND TEST_PLUGIN_SOURCES test_filter.c)
+else()
+    message(STATUS "Disabling test_filter (FFmpeg 8.0+ uses FFFilter internally)")
+    add_compile_definitions(DISABLE_TEST_FILTER)
+endif()
+
+add_library(test_arcana_plugs SHARED ${TEST_PLUGIN_SOURCES})
 
 # Use target-based include directories
 target_include_directories(test_arcana_plugs PRIVATE
@@ -45,7 +65,7 @@ target_compile_definitions(test_arcana_plugs PRIVATE __STDC_CONSTANT_MACROS)
 
 # Define FFMPEG_LIBS explicitly if not provided by the user
 if(NOT DEFINED FFMPEG_LIBS)
-    set(FFMPEG_LIBS avfilter avformat avcodec avutil swresample swscale)
+    set(FFMPEG_LIBS avfilter_arcana avformat_arcana avcodec_arcana avutil_arcana swresample_arcana swscale_arcana)
 endif()
 
 target_link_libraries(test_arcana_plugs PRIVATE
