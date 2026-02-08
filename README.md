@@ -128,28 +128,34 @@ void arcana_register(char *conf_string)
 
 ### Custom Codec IDs (FFmpeg 7.1+)
 
-When creating a truly custom codec (not re-implementing an existing one), you need a unique `AVCodecID` and a matching `AVCodecDescriptor`. The patches for FFmpeg 7.1 and later provide two functions for this:
+When creating a truly custom codec (not re-implementing an existing one), you need a unique `AVCodecID` and a matching `AVCodecDescriptor`. The patches for FFmpeg 7.1 and later provide:
 
-- **`arcana_codec_id_generate(name)`** — Generates a deterministic `AVCodecID` from a codec name string using FNV-1a hashing. The IDs are based at `0x1000000`, well above any built-in FFmpeg codec ID, with a 20-bit hash giving ~1M possible values.
+- **`ARCANA_CODEC_ID("name")`** — A compile-time macro that generates a deterministic `AVCodecID` from a string literal using FNV-1a hashing. Can be used in static initializers in C++ plugins. Supports names up to 32 characters. Note: C compilers do not consider string literal indexing a constant expression, so this macro cannot be used in C static initializers — use `arcana_codec_id_generate()` at runtime instead.
+
+- **`arcana_codec_id_generate(name)`** — The runtime equivalent, suitable for C plugins and any context where the name isn't a compile-time constant. Produces the same values as the macro.
 
 - **`arcana_register_codec_descriptor(desc)`** — Registers an `AVCodecDescriptor` so that FFmpeg's descriptor lookup functions (`avcodec_descriptor_get()`, `avcodec_descriptor_get_by_name()`, and `avcodec_descriptor_next()`) can find it.
+
+All generated IDs are based at `0x1000000`, well above any built-in FFmpeg codec ID, with a 20-bit hash giving ~1M possible values.
 
 Example:
 
 ```c
 #include "arcana/libavcodec/codec_desc.h"
 
+#define MY_CODEC_NAME "my_custom_codec"
+
 AVCodecDescriptor my_codec_desc = {
     .id        = AV_CODEC_ID_NONE,  /* set at runtime */
     .type      = AVMEDIA_TYPE_VIDEO,
-    .name      = "my_custom_codec",
+    .name      = MY_CODEC_NAME,
     .long_name = "My Custom Video Codec",
     .props     = AV_CODEC_PROP_LOSSY,
 };
 
 void arcana_register(char *conf_string)
 {
-    my_codec_desc.id = arcana_codec_id_generate(my_codec_desc.name);
+    my_codec_desc.id = arcana_codec_id_generate(MY_CODEC_NAME);
     arcana_register_codec_descriptor((void *)&my_codec_desc);
     // ... register encoder/decoder using the same ID ...
 }

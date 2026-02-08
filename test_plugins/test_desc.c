@@ -3,6 +3,9 @@
  *
  * Demonstrates registering a custom AVCodecDescriptor with a
  * dynamically generated AVCodecID via arcana_codec_id_generate().
+ *
+ * Note: The ARCANA_CODEC_ID() macro provides compile-time ID generation
+ * for C++ plugins. In C, use arcana_codec_id_generate() at runtime.
  */
 
 #include "test_desc.h"
